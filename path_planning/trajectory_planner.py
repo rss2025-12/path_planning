@@ -71,7 +71,7 @@ class PathPlan(Node):
         self.goal_pose = None
 
         # Planning vars
-        self.search_based = True # False: sample_based
+        self.search_based = False # False: sample_based
 
         self.get_logger().info("Path planner initialized")
 
@@ -142,24 +142,26 @@ class PathPlan(Node):
     def try_plan_path(self):
         if self.map is not None and self.initial_pose is not None and self.goal_pose is not None:
             self.plan_path(self.initial_pose, self.goal_pose, self.map)
+            self.initial_pose = None
+            self.goal_pose = None
 
     def plan_path(self, start_point, end_point, map):
         if self.search_based:
             pixel_path = self.a_star(start_point, end_point, map)
-
-            if pixel_path is None or len(pixel_path) == 0:
-                self.get_logger().warn("No path found")
-                return
-
-            self.trajectory.clear()
-            for mx, my in pixel_path:
-                wx, wy = self.map_to_world(mx, my)
-                self.trajectory.addPoint((wx, wy))
-
-            self.traj_pub.publish(self.trajectory.toPoseArray())
-            self.trajectory.publish_viz()
         else:
-            pass
+            pixel_path = self.rrt(start_point, end_point)
+
+        if pixel_path is None or len(pixel_path) == 0:
+            self.get_logger().warn("No path found")
+            return
+
+        self.trajectory.clear()
+        for mx, my in pixel_path:
+            wx, wy = self.map_to_world(mx, my)
+            self.trajectory.addPoint((wx, wy))
+
+        self.traj_pub.publish(self.trajectory.toPoseArray())
+        self.trajectory.publish_viz()
 
     def world_to_map(self, x, y):
         T_world_point = np.array([[1, 0, x],
@@ -197,14 +199,11 @@ class PathPlan(Node):
 
         height, width = map.shape
 
-        self.get_logger().info(f"{start_point}")
-        self.get_logger().info(f"{end_point}")
-
         start = self.world_to_map(start_point[0], start_point[1])
         goal = self.world_to_map(end_point[0], end_point[1])
 
-        self.get_logger().info(f"{start}")
-        self.get_logger().info(f"{goal}")
+        self.get_logger().info(f"{start=}")
+        self.get_logger().info(f"{goal=}")
 
         open_set = []
         heapq.heappush(open_set, (0 + heuristic(start, goal), 0, start))  # (f_score, g_score, node)
@@ -246,7 +245,166 @@ class PathPlan(Node):
                     parent[neighbor] = current
 
         return []
+    
+    # RRT methods
+    def sample(self):
+        map_width, map_height = self.map.shape
+        rand_x = np.random.randint(0, map_width)
+        rand_y = np.random.randint(0, map_height)
+        # rand_theta = np.random.uniform(0, 2*np.pi)
+        return (rand_x, rand_y)
 
+    def nearest(self, curr_point, rand_points):
+        # rand_points is an np arrays of tuples representing points
+        # curr_point is our current starting position
+        distances = []
+        for node in rand_points:
+            distances.append(np.linalg.norm(np.array(curr_point) - np.array(node.value[:2])))
+
+        return rand_points[np.argmin(np.array(distances), axis=0)]
+
+    # def steer(self, znearest, zrand, max_steer_ang=3*np.pi/4, L=0.5, lookahead=1):
+    #     # include dynamic and kinematic constraints?
+    #     # motion model?
+
+    #     # need to limit max steering angle, will find necessary angle using pure pursuit model
+    #     # map frame
+    #     # TODO: CONVERT POINTS FROM MAP FRAME TO ROBOT FRAME
+    #     # robot frame:
+    #     x_robot, y_robot, theta_robot = znearest
+    #     x_wp, y_wp = zrand
+    #     dx = x_wp - x_robot
+    #     dy = y_wp - y_robot
+
+    #     if (dx**2+dy**2)**(0.5) > lookahead:
+    #         y = lookahead/np.sqrt(1+(dx/dy)**2)
+    #         x = y*(dx/dy)
+    #         dx, dy = x, y
+
+    #     angle_to_wp = np.arctan2(dy, dx)
+
+    #     # Calculate the steering angle (geometry of the pursuit)
+    #     angle_diff = angle_to_wp
+    #     # Pure Pursuit formula for steering angle (in radians)
+    #     req_steer_ang = np.arctan2(2.0* L * np.sin(angle_diff), lookahead)
+    #     if np.abs(req_steer_ang) > max_steer_ang:
+    #         steer_angle = (req_steer_ang/np.abs(req_steer_ang))*max_steer_ang
+    #     else:
+    #         steer_angle = req_steer_ang
+
+    #     R = lookahead/(2*np.sin(steer_angle))
+    #     alpha = np.arcsin(lookahead*np.tan(steer_angle)/(2*L))
+    #     gamma1 = 2*alpha
+    #     dtheta = gamma1
+
+    #     x_new, y_new, theta_new = 0,0,0
+
+    #     min_dist = None
+    #     x_out, y_out, theta_out = None
+
+    #     while theta_new <= 2*np.pi:
+    #         dy_i = R*(np.cos(dtheta+theta_new)-np.cos(theta_new))
+    #         dx_i = R*(np.sin(dtheta+theta_new)-np.sin(theta_new))
+    #         theta_new = dtheta + theta_new
+    #         x_new, y_new = x_new + dx_i, y_new + dy_i
+    #         goal_dist = np.linalg.norm(np.array([x_wp-x_new, y_wp-y_new]))
+    #         if min_dist == None or goal_dist < min_dist:
+    #             min_dist = goal_dist
+    #             x_out, y_out, theta_out = x_new, y_new, theta_new
+        
+    #     return np.array(x_out, y_out, theta_out)
+
+    def steer(self, znearest, zrand, max_steer_ang=3*np.pi/4, L=0.5, lookahead=1.0):
+        x_robot, y_robot, theta_robot = znearest
+        x_wp, y_wp = zrand
+
+        # Transform waypoint into robot frame
+        dx = x_wp - x_robot
+        dy = y_wp - y_robot
+        dx_r = np.cos(-theta_robot) * dx - np.sin(-theta_robot) * dy
+        dy_r = np.sin(-theta_robot) * dx + np.cos(-theta_robot) * dy
+
+        dist = np.hypot(dx_r, dy_r)
+        if dist > lookahead:
+            dy_r = lookahead / np.sqrt(1 + (dx_r / dy_r) ** 2)
+            dx_r = dy_r * (dx_r / dy_r)
+
+        angle_to_wp = np.arctan2(dy_r, dx_r)
+
+        # Pure Pursuit steering angle
+        req_steer_ang = np.arctan2(2 * L * np.sin(angle_to_wp), lookahead)
+
+        # Clip to max steering angle
+        steer_angle = np.clip(req_steer_ang, -max_steer_ang, max_steer_ang)
+
+        # Compute turning radius and delta heading
+        R = L / np.tan(steer_angle)
+        dtheta = lookahead / R
+
+        # Compute new pose in robot frame
+        x_new = R * np.sin(dtheta)
+        y_new = R * (1 - np.cos(dtheta))
+        theta_new = dtheta
+
+        # Transform back to map frame
+        x_map = x_robot + np.cos(theta_robot) * x_new - np.sin(theta_robot) * y_new
+        y_map = y_robot + np.sin(theta_robot) * x_new + np.cos(theta_robot) * y_new
+        theta_map = (theta_robot + theta_new) % (2 * np.pi)
+
+        return np.array([x_map, y_map, theta_map])
+
+    def in_collision(self, x):
+        # check that point is not in occupancy grid or out of bounds
+        map_width, map_height = self.map.shape
+        if not (0 <= x[0] < map_width and 0 <= x[1] < map_height):
+            return False
+
+        if self.map[x[1], x[0]] != 0:
+            return False
+        return True
+
+    def collision_free(self, xcurrent, xnew, steps = 1000):
+        # check that all points along path from xcurrent to xnew are not in collision
+        direction = xnew - xcurrent
+        step = direction/steps
+        for i in range(steps):
+            pt = xcurrent + step
+            if self.in_collision(pt):
+                return False
+        return True
+
+    def rrt(self, start_point, end_point, goal_radius=1):
+        loop_cap = 10000
+        nodes = [RRTNode(start_point)]
+        for i in range(loop_cap):
+            self.get_logger().info(f'the iteration is {i} mickey mice')
+            random_point = self.sample()
+            parent = self.nearest(random_point, nodes)
+            new_point = self.steer(parent.value, random_point)
+            if not self.in_collision(new_point) and self.collision_free(parent.value, new_point):
+                new_node = RRTNode(new_point)
+                new_node.parent = parent
+                nodes.append(new_node)
+
+            if np.linalg.norm(new_node.value - end_point) <= goal_radius: 
+                path = []
+                curr_node = new_node
+                while curr_node.parent: 
+                    path.append(curr_node.value)
+                    curr_node = curr_node.parent
+                return path
+        return None
+
+class RRTNode:
+    def __init__(self, value):
+        self.value = value
+        self.parent = None
+
+    def add_child(self, child_node):
+        self.children.append(child_node)
+
+    def remove_child(self, child_node):
+        self.children.remove(child_node)
 
 def main(args=None):
     rclpy.init(args=args)
