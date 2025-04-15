@@ -3,6 +3,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 from geometry_msgs.msg import PoseArray
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
+from visualization_msgs.msg import Marker
 
 from .utils import LineTrajectory
 from scipy.spatial.transform import Rotation as R
@@ -21,13 +22,6 @@ class PurePursuit(Node):
         self.odom_topic = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.drive_topic = self.get_parameter('drive_topic').get_parameter_value().string_value
 
-        self.speed = 5.0  # PLEASE GOD REMEMBER TO CHANGE THIS LATER
-        self.lookahead = 2.25*self.speed**2
-        self.wheelbase_length = 0.1
-
-        self.trajectory = LineTrajectory("/followed_trajectory")
-        self.initialized_traj = False
-
         self.traj_sub = self.create_subscription(PoseArray,
                                                  "/trajectory/current",
                                                  self.trajectory_callback,
@@ -39,6 +33,19 @@ class PurePursuit(Node):
                                                  self.odom_topic,
                                                  self.pose_callback,
                                                  1)
+        self.intersect_pub = self.create_publisher(Marker,
+                                                   "/intersection",
+                                                   1)
+
+        self.speed = 5.0 # Remeber to change later
+        self.lookahead = 1.0 # 2.25*self.speed**2
+        self.wheelbase_length = 0.1
+
+        self.trajectory = LineTrajectory("/followed_trajectory")
+        self.initialized_traj = False
+        self.progress_index = 0
+
+        self.visualize_intersect = True
 
         self.get_logger().info("Path follower initialized")
 
@@ -55,91 +62,92 @@ class PurePursuit(Node):
         _, _, theta = R.from_quat(quaternion).as_euler('xyz', degrees=False)
 
         points = np.array(self.trajectory.points)
-        start_to_end = points[1:] - points[:-1]
-        start_to_point = np.array([x, y]) - points[:-1]
+        car = np.array([x, y])
 
-        dot_products = np.sum(start_to_end * start_to_point, axis=1)
-        segment_lengths_squared = np.sum(start_to_end**2, axis=1)
-        projections = np.clip(dot_products / segment_lengths_squared, 0, 1)
+        # Check if at goal
+        if np.linalg.norm(points[-1] - car) < 0.1:
+            drive_msg = AckermannDriveStamped()
+            drive_msg.header.stamp = self.get_clock().now().to_msg()
+            drive_msg.header.frame_id = 'base_link'
+            drive_msg.drive.speed = 0.0
+            drive_msg.drive.steering_angle = 0.0
 
-        closest_points = points[:-1] + projections[:, np.newaxis] * start_to_end
-        distances_squared = np.sum((closest_points - np.array([x, y]))**2, axis=1)
-        closest_segment_idx = np.argmin(distances_squared)
+            self.drive_pub.publish(drive_msg)
+            self.get_logger().info("At goal pose")
+            return
 
-        if closest_segment_idx < len(self.trajectory.points) - 1: # If point is along path
-            target_point = None
-            search_idx = closest_segment_idx
-            while search_idx < len(self.trajectory.points) - 1:
-                closest_wp = self.trajectory.points[search_idx]
-                next_wp = self.trajectory.points[search_idx + 1]
-                intersect_points = self.circle_segment_intersect([x, y], closest_wp, next_wp)
+        target_point, target_index = self.circle_segment_intersections(points, self.lookahead, car)
 
-                if intersect_points:
-                    target_point = intersect_points[0]  # Pick the one furthest along the segment
-                    break
-                search_idx += 1
-
-            # No intersection found, target next waypoint
-            if target_point is None:
-                target_point = self.trajectory.points[min(closest_segment_idx + 1, len(self.trajectory.points) - 1)]
-        else: # If point is last one in path
-            target_point = self.trajectory.points[closest_segment_idx]
+        if np.linalg.norm(points[-1] - car) < 2 * self.lookahead:
+            target_point = points[-1]
+        elif target_point is None:
+            target_point = points[np.argmin(np.sum((points - car)**2, axis=1))]
 
         steering_angle = self.compute_steering_angle(x, y, target_point[0], target_point[1], theta)
 
+        if self.visualize_intersect is True:
+            self.publish_intersection(target_point)
+
         drive_msg = AckermannDriveStamped()
         drive_msg.header.stamp = self.get_clock().now().to_msg()
-        drive_msg.header.frame_id = 'base_link'  # Frame ID
-        drive_msg.drive.speed = self.speed  # Linear velocity in m/s
-        drive_msg.drive.steering_angle = steering_angle  # Steering angle in radians
+        drive_msg.header.frame_id = 'base_link'
+        drive_msg.drive.speed = self.speed
+        drive_msg.drive.steering_angle = steering_angle
 
         self.drive_pub.publish(drive_msg)
 
-    def circle_segment_intersect(self, circle_center, point1, point2):
-        """
-        Calculates the intersection point(s) of a circle with a given radius (self.lookahead),
-        centered at 'circle_center', and the line segment defined by 'point1' and 'point2'.
+    def circle_segment_intersections(self, points, radius, center):
+        best_intersection = None
+        best_index = -1
+        best_t = -1
 
-        All points are given in [x, y] format.
+        for i in range(len(points) - 1):
+            p1 = points[i]
+            p2 = points[i + 1]
+            d = p2 - p1
+            f = p1 - center
 
-        Returns:
-            A list of intersection point(s) within the segment, sorted by proximity to point2
-            (furthest along the segment), or None if no valid intersection exists.
-        """
-        cx, cy = circle_center
-        x1, y1 = point1
-        x2, y2 = point2
+            a = np.dot(d, d)
+            b = 2 * np.dot(f, d)
+            c = np.dot(f, f) - radius**2
 
-        dx = x2 - x1
-        dy = y2 - y1
+            discriminant = b**2 - 4 * a * c
+            if discriminant < 0:
+                continue
 
-        fx = x1 - cx
-        fy = y1 - cy
+            sqrt_disc = np.sqrt(discriminant)
+            for sign in [-1, 1]:
+                t = (-b + sign * sqrt_disc) / (2 * a)
+                if 0 <= t <= 1:
+                    if i > best_index or (i == best_index and t > best_t):
+                        best_intersection = p1 + t * d
+                        best_index = i
+                        best_t = t
 
-        a = dx**2 + dy**2
-        b = 2 * (fx * dx + fy * dy)
-        c = fx**2 + fy**2 - self.lookahead**2
+        return best_intersection, best_index  # will be None if no intersection
 
-        if abs(a) < 1e-8:
-            return []
+    def publish_intersection(self, intersection):
+        intersect_msg = Marker()
+        intersect_msg.header.frame_id = "/map"
+        intersect_msg.header.stamp = self.get_clock().now().to_msg()
+        intersect_msg.pose.position.x = intersection[0]
+        intersect_msg.pose.position.y = intersection[1]
+        intersect_msg.pose.position.z = 0.0
+        intersect_msg.pose.orientation.x = 0.0
+        intersect_msg.pose.orientation.y = 0.0
+        intersect_msg.pose.orientation.z = 0.0
+        intersect_msg.pose.orientation.w = 0.0
+        intersect_msg.scale.x = 1.0
+        intersect_msg.scale.y = 1.0
+        intersect_msg.scale.z = 1.0
 
-        discriminant = b**2 - 4 * a * c
-        if discriminant < 0:
-            return []  # No intersection
+        intersect_msg.type = 2
+        intersect_msg.color.r = 0.0
+        intersect_msg.color.g = 0.0
+        intersect_msg.color.b = 1.0
+        intersect_msg.color.a = 1.0
 
-        discriminant = np.sqrt(discriminant)
-        t1 = (-b - discriminant) / (2 * a)
-        t2 = (-b + discriminant) / (2 * a)
-
-        intersections = []
-        for t in [t1, t2]:
-            if 0 <= t <= 1:
-                ix = x1 + t * dx
-                iy = y1 + t * dy
-                intersections.append([ix, iy])
-
-        intersections.sort(key=lambda p: np.linalg.norm(np.subtract(p, point2)))
-        return intersections
+        self.intersect_pub.publish(intersect_msg)
 
     def compute_steering_angle(self, x_robot, y_robot, x_target, y_target, theta):
         """
