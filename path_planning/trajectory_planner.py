@@ -518,7 +518,7 @@ class PathPlan(Node):
                     # self.get_logger().info(f'within goal radius')
                     path = []
                     curr_node = new_node
-                    while curr_node.parent: 
+                    while curr_node.parent:
                         path.append(curr_node.value[:2])
                         curr_node = curr_node.parent
                     return path[::-1]
@@ -526,7 +526,6 @@ class PathPlan(Node):
                 # self.get_logger().info(f'in collision')
                 pass
 
-            
             if i%500 == 0:
                 # self.get_logger().info(f'{[node.value for node in nodes]}')
                 pass
@@ -534,7 +533,7 @@ class PathPlan(Node):
                 self.pub_rrt_pt(np.array(nodes))
 
         return None
-    
+
     def pub_rrt_pt(self, nodes):
         # self.get_logger().info(f'trying to publish {[node.value for node in nodes]}')
         points = [self.map_to_world(*node.value[:2]) for node in nodes]

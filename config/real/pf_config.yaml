@@ -1,6 +1,6 @@
 particle_filter:
   ros__parameters:
-    num_particles: 100
+    num_particles: 200
 
     # The number of lidar beams emitted from
     # each particle. This doesn't need to be
@@ -10,7 +10,7 @@ particle_filter:
 
     # The field of view centered around theta=0
     scan_field_of_view: 4.71 # radians
-    
+
     # angle stride for downsampling the lidar data
     angle_step: 11
 
@@ -26,6 +26,12 @@ particle_filter:
     particle_filter_frame: "/base_link"
 
     # Deterministic flag; set to true to remove all added noise
-    deterministic: false
+    deterministic: False
+
+    # Invert odom data when using real car
+    odom_invert: True
+
+    # Frequency of the sensor model evaluating
+    sensor_model_frequency: 20.0
 
     lidar_scale_to_map_scale: 1.0
