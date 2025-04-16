@@ -466,7 +466,7 @@ class PathPlan(Node):
         """
         all points are in the map frame
         """
-        start_time = self.get_clock().now()
+        start_time = self.get_clock().now().nanoseconds
         map_width, map_height = self.map.shape
         loop_cap = 10000
         # start_point = (self.world_to_map(*start_point_map[:2])[0], self.world_to_map(*start_point_map[:2])[1], [start_point_map[2]-np.pi])
@@ -479,7 +479,7 @@ class PathPlan(Node):
         # self.get_logger().info(f'xbounds are {self.rrt_xbounds}')
 
         for i in range(loop_cap):
-            self.get_logger().info(f'the iteration is {i} mickey mice')
+            # self.get_logger().info(f'the iteration is {i} mickey mice')
             if i % 3 == 0:
                 random_point = end_point[:2]
             else: 
@@ -513,8 +513,8 @@ class PathPlan(Node):
                 ##
 
                 if np.linalg.norm(new_node.value[:2] - end_point[:2]) <= goal_radius: 
-                    end_time = self.get_clock().now()
-                    self.get_logger().info(f'found goal; final time = {end_time - start_time}')
+                    end_time = self.get_clock().now().nanoseconds
+                    self.get_logger().info(f'found goal; final time = {(end_time - start_time)/1e9}')
                     # self.get_logger().info(f'within goal radius')
                     path = []
                     curr_node = new_node
