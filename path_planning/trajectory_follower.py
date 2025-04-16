@@ -39,12 +39,13 @@ class PurePursuit(Node):
                                                    1)
 
         self.speed = 5.0  # Remeber to change later
-        self.lookahead = 1.0  # 2.25 * self.speed**2
-        self.min_lookahead = 1.0
+        self.lookahead = 1.25  # 2.25 * self.speed**2
+        self.min_lookahead = 1.5
         self.max_lookahead = 4.0
+        self.lookahead_threshold = 2.5
         self.wheelbase_length = 0.1
 
-        self.trajectory = LineTrajectory("/followed_trajectory")
+        self.trajectory = LineTrajectory(node=self, viz_namespace="/followed_trajectory")
         self.initialized_traj = False
         self.progress_index = 0
         self.simplify_traj = True
@@ -60,14 +61,18 @@ class PurePursuit(Node):
         self.trajectory.fromPoseArray(msg)
 
         if self.simplify_traj is True:
-            self.trajectory.points = self.remove_colinear_points(self.trajectory.points)
+            new_points = self.remove_colinear_points(self.trajectory.points)
+            self.trajectory.clear()
+
+            for point in new_points:
+                self.trajectory.addPoint(point)
 
         self.trajectory.publish_viz(duration=0.0)
         self.points = np.array(self.trajectory.points)
         self.get_logger().info(f"{len(self.points)}")
         self.initialized_traj = True
 
-    def remove_colinear_points(self, trajectory, tol=1e-9):
+    def remove_colinear_points(self, trajectory, tol=0.0018):
         """
         Removes colinear intermediate points from a 2D trajectory.
 

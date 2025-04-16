@@ -263,7 +263,7 @@ class PathPlan(Node):
         # rand_points is an np arrays of tuples representing points
         # curr_point is our current starting position
         rand_points = [rand_node.value[:2] for rand_node in rand_nodes]
-        
+
         distances = []
         for point in rand_points:
             distances.append(np.linalg.norm(np.array(curr_point) - np.array(point)))
@@ -338,7 +338,7 @@ class PathPlan(Node):
             dx_r = lookahead / np.sqrt(1 + (x / y) ** 2)
             dy_r = dx_r * (y / x)
             self.get_logger().info(f'point {(x, y)} too far, now {(dx_r, dy_r)}')
-        
+
         # works? until here
 
         angle_to_wp = np.arctan2(dy_r, dx_r)
@@ -399,7 +399,7 @@ class PathPlan(Node):
             self.get_logger().info(f'the iteration is {i} mickey mice')
             if i % 3 == 0:
                 random_point = end_point[:2]
-            else: 
+            else:
                 random_point = self.sample() # map frame
             parent = self.nearest(random_point, nodes) # map frame
             new_point = self.steer(parent.value, random_point, lookahead=1.5)
@@ -413,15 +413,15 @@ class PathPlan(Node):
                 new_node.parent = parent
                 nodes.append(new_node)
 
-                if np.linalg.norm(new_node.value[:2] - end_point[:2]) <= goal_radius: 
+                if np.linalg.norm(new_node.value[:2] - end_point[:2]) <= goal_radius:
                     self.get_logger().info(f'within goal radius')
                     path = []
                     curr_node = new_node
-                    while curr_node.parent: 
+                    while curr_node.parent:
                         path.append(curr_node.value[:2])
                         curr_node = curr_node.parent
                     return path
-            
+
             if i%500 == 0:
                 # self.get_logger().info(f'{[node.value for node in nodes]}')
                 pass
@@ -429,7 +429,7 @@ class PathPlan(Node):
                 self.pub_rrt_pt(np.array(nodes))
 
         return None
-    
+
     def pub_rrt_pt(self, nodes):
         self.get_logger().info(f'trying to publish {[node.value for node in nodes]}')
         points = [self.map_to_world(*node.value[:2]) for node in nodes]
