@@ -71,7 +71,7 @@ class PathPlan(Node):
         self.goal_pose = None
 
         # Planning vars
-        self.search_based = True # False: sample_based
+        self.search_based = False # False: sample_based
 
         self.get_logger().info("Path planner initialized")
 
