@@ -1,3 +1,11 @@
 trajectory_planner:
   ros__parameters:
-    parameter: "fill this in :)"
+    odom_topic: "/pf/pose/odom"
+    map_topic: "/map"
+    scan_topic: "/scan"
+    initial_pose_topic: "/initialpose"
+trajectory_follower:
+  ros__parameters:
+    odom_topic: "/pf/pose/odom"
+    drive_topic: "/vesc/high_level/input/nav_0"
+    drive_speed: 1.0

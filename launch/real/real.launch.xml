@@ -1,3 +1,11 @@
 <launch>
-    <!--Add your code-->
+     <node pkg="path_planning" exec="trajectory_planner" name="trajectory_planner" output="screen">
+        <param from="$(find-pkg-share path_planning)/config/real/config.yaml"/>
+    </node>
+    <node pkg="path_planning" exec="trajectory_follower" name="trajectory_follower">
+        <param from="$(find-pkg-share path_planning)/config/real/config.yaml"/>
+    </node>
+    <node pkg="localization" exec="particle_filter" name="particle_filter" output="screen">
+        <param from="$(find-pkg-share path_planning)/config/real/pf_config.yaml"/>
+    </node>
 </launch>

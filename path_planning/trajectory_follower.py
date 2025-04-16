@@ -19,6 +19,7 @@ class PurePursuit(Node):
         super().__init__("trajectory_follower")
         self.declare_parameter('odom_topic', "default")
         self.declare_parameter('drive_topic', "default")
+        
 
         self.odom_topic = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.drive_topic = self.get_parameter('drive_topic').get_parameter_value().string_value
@@ -38,9 +39,15 @@ class PurePursuit(Node):
                                                    "/intersection",
                                                    1)
 
-        self.speed = 5.0  # Remeber to change later
+
+        self.declare_parameter('drive_speed', 5.0)
+
+        self.speed = self.get_parameter('drive_speed').get_parameter_value().double_value
         self.lookahead = 1.0  # 2.25 * self.speed**2
         self.wheelbase_length = 0.1
+
+        self.get_logger().info(f"Speed is {self.speed}")
+
 
         self.trajectory = LineTrajectory("/followed_trajectory")
         self.initialized_traj = False
