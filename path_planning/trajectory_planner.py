@@ -1,8 +1,10 @@
 import rclpy
 from rclpy.node import Node
+from tf_transformations import euler_from_quaternion, quaternion_from_euler
+
 
 assert rclpy
-from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped, PoseArray
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped, PoseArray, Quaternion, Point, Pose
 from nav_msgs.msg import OccupancyGrid
 from .utils import LineTrajectory
 # from tf_transformations import euler_from_quaternion
@@ -60,6 +62,9 @@ class PathPlan(Node):
             "/map_debug",
             1
         )
+
+        self.point_debug_pub = self.create_publisher(PoseArray, "/debug_points", 1)
+
 
         # Map vars
         self.map = None
@@ -149,7 +154,7 @@ class PathPlan(Node):
         if self.search_based:
             pixel_path = self.a_star(start_point, end_point, map)
         else:
-            pixel_path = self.rrt(start_point, end_point)
+            pixel_path = self.rrt(start_point, end_point, goal_radius=3)
 
         if pixel_path is None or len(pixel_path) == 0:
             self.get_logger().warn("No path found")
@@ -249,19 +254,21 @@ class PathPlan(Node):
     # RRT methods
     def sample(self):
         map_width, map_height = self.map.shape
-        rand_x = np.random.randint(0, map_width)
-        rand_y = np.random.randint(0, map_height)
+        rand_x = np.random.uniform(0, map_width)
+        rand_y = np.random.uniform(0, map_height)
         # rand_theta = np.random.uniform(0, 2*np.pi)
         return (rand_x, rand_y)
 
-    def nearest(self, curr_point, rand_points):
+    def nearest(self, curr_point, rand_nodes):
         # rand_points is an np arrays of tuples representing points
         # curr_point is our current starting position
+        rand_points = [rand_node.value[:2] for rand_node in rand_nodes]
+        
         distances = []
-        for node in rand_points:
-            distances.append(np.linalg.norm(np.array(curr_point) - np.array(node.value[:2])))
+        for point in rand_points:
+            distances.append(np.linalg.norm(np.array(curr_point) - np.array(point)))
 
-        return rand_points[np.argmin(np.array(distances), axis=0)]
+        return rand_nodes[np.argmin(np.array(distances))] #, axis=0
 
     # def steer(self, znearest, zrand, max_steer_ang=3*np.pi/4, L=0.5, lookahead=1):
     #     # include dynamic and kinematic constraints?
@@ -319,27 +326,32 @@ class PathPlan(Node):
         x_wp, y_wp = zrand
 
         # Transform waypoint into robot frame
-        dx = x_wp - x_robot
-        dy = y_wp - y_robot
+        dx = x_wp - x_robot # map frame
+        dy = y_wp - y_robot # map frame
         dx_r = np.cos(-theta_robot) * dx - np.sin(-theta_robot) * dy
         dy_r = np.sin(-theta_robot) * dx + np.cos(-theta_robot) * dy
+        x = dx_r
+        y = dy_r
 
         dist = np.hypot(dx_r, dy_r)
         if dist > lookahead:
-            dy_r = lookahead / np.sqrt(1 + (dx_r / dy_r) ** 2)
-            dx_r = dy_r * (dx_r / dy_r)
+            dx_r = lookahead / np.sqrt(1 + (x / y) ** 2)
+            dy_r = dx_r * (y / x)
+            self.get_logger().info(f'point {(x, y)} too far, now {(dx_r, dy_r)}')
+        
+        # works? until here
 
         angle_to_wp = np.arctan2(dy_r, dx_r)
 
         # Pure Pursuit steering angle
-        req_steer_ang = np.arctan2(2 * L * np.sin(angle_to_wp), lookahead)
+        req_steer_ang = np.arctan2(2 * L * np.sin(angle_to_wp), lookahead) #suspicious #imposter
 
         # Clip to max steering angle
         steer_angle = np.clip(req_steer_ang, -max_steer_ang, max_steer_ang)
 
         # Compute turning radius and delta heading
-        R = L / np.tan(steer_angle)
-        dtheta = lookahead / R
+        R = L / np.tan(steer_angle) #suspicious
+        dtheta = lookahead / R #suspicious
 
         # Compute new pose in robot frame
         x_new = R * np.sin(dtheta)
@@ -353,15 +365,15 @@ class PathPlan(Node):
 
         return np.array([x_map, y_map, theta_map])
 
-    def in_collision(self, x):
+    def in_collision(self, point):
         # check that point is not in occupancy grid or out of bounds
         map_width, map_height = self.map.shape
-        if not (0 <= x[0] < map_width and 0 <= x[1] < map_height):
-            return False
+        if not (0 <= point[0] < map_width and 0 <= point[1] < map_height):
+            return True
 
-        if self.map[x[1], x[0]] != 0:
-            return False
-        return True
+        if self.map[int(point[1]), int(point[0])] != 0:
+            return True
+        return False
 
     def collision_free(self, xcurrent, xnew, steps = 1000):
         # check that all points along path from xcurrent to xnew are not in collision
@@ -373,27 +385,70 @@ class PathPlan(Node):
                 return False
         return True
 
-    def rrt(self, start_point, end_point, goal_radius=1):
+    def rrt(self, start_point_map, end_point_map, goal_radius=1):
+        """
+        all points are in the map frame
+        """
         loop_cap = 10000
+        # start_point = (self.world_to_map(*start_point_map[:2])[0], self.world_to_map(*start_point_map[:2])[1], [start_point_map[2]-np.pi])
+        # end_point = (self.world_to_map(*end_point_map[:2])[0], self.world_to_map(*end_point_map[:2])[1], end_point_map[2]-np.pi)
+        start_point = np.array([*self.world_to_map(*start_point_map[:2]), start_point_map[2]-np.pi])
+        end_point = np.array([*self.world_to_map(*end_point_map[:2]), end_point_map[2]-np.pi])
         nodes = [RRTNode(start_point)]
         for i in range(loop_cap):
             self.get_logger().info(f'the iteration is {i} mickey mice')
-            random_point = self.sample()
-            parent = self.nearest(random_point, nodes)
-            new_point = self.steer(parent.value, random_point)
-            if not self.in_collision(new_point) and self.collision_free(parent.value, new_point):
+            if i % 3 == 0:
+                random_point = end_point[:2]
+            else: 
+                random_point = self.sample() # map frame
+            parent = self.nearest(random_point, nodes) # map frame
+            new_point = self.steer(parent.value, random_point, lookahead=1.5)
+            # if not self.collision_free(parent.value, new_point) and parent.parent:
+            #     parent = parent.parent
+            #     new_point = self.steer(parent.value, random_point, lookahead=1.)
+
+            if self.collision_free(parent.value, new_point):
+                self.get_logger().info(f'not in collision, adding point {new_point}')
                 new_node = RRTNode(new_point)
                 new_node.parent = parent
                 nodes.append(new_node)
 
-            if np.linalg.norm(new_node.value - end_point) <= goal_radius:
-                path = []
-                curr_node = new_node
-                while curr_node.parent:
-                    path.append(curr_node.value)
-                    curr_node = curr_node.parent
-                return path
+                if np.linalg.norm(new_node.value[:2] - end_point[:2]) <= goal_radius: 
+                    self.get_logger().info(f'within goal radius')
+                    path = []
+                    curr_node = new_node
+                    while curr_node.parent: 
+                        path.append(curr_node.value[:2])
+                        curr_node = curr_node.parent
+                    return path
+            
+            if i%500 == 0:
+                # self.get_logger().info(f'{[node.value for node in nodes]}')
+                pass
+            if nodes:
+                self.pub_rrt_pt(np.array(nodes))
+
         return None
+    
+    def pub_rrt_pt(self, nodes):
+        self.get_logger().info(f'trying to publish {[node.value for node in nodes]}')
+        points = [self.map_to_world(*node.value[:2]) for node in nodes]
+        viz_points = PoseArray()
+        viz_points.header.stamp = self.get_clock().now().to_msg()
+        viz_points.header.frame_id = self.map_topic
+
+        viz_points.poses = []
+        for i, point in enumerate(points):
+            q = quaternion_from_euler(0, 0, nodes[i].value[2]+np.pi)
+            quaternion_msg = Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
+
+            pose = Pose(
+                position=Point(x=point[0], y=point[1], z=0.0),
+                orientation=quaternion_msg
+            )
+            viz_points.poses.append(pose)
+
+        self.point_debug_pub.publish(viz_points)
 
 class RRTNode:
     def __init__(self, value):
