@@ -43,19 +43,71 @@ class PurePursuit(Node):
         self.declare_parameter('drive_speed', 5.0)
 
         self.speed = self.get_parameter('drive_speed').get_parameter_value().double_value
-        self.lookahead = 1.0  # 2.25 * self.speed**2
+        self.lookahead = 1.25  # 2.25 * self.speed**2
+        self.min_lookahead = 1.5
+        self.max_lookahead = 4.0
+        self.lookahead_threshold = 2.5
         self.wheelbase_length = 0.1
 
         self.get_logger().info(f"Speed is {self.speed}")
 
-
-        self.trajectory = LineTrajectory("/followed_trajectory")
+        self.trajectory = LineTrajectory(node=self, viz_namespace="/followed_trajectory")
         self.initialized_traj = False
         self.progress_index = 0
+        self.simplify_traj = True
 
         self.visualize_intersect = True
 
         self.get_logger().info("Path follower initialized")
+
+    def trajectory_callback(self, msg):
+        self.get_logger().info(f"Receiving new trajectory with {len(msg.poses)} points")
+
+        self.trajectory.clear()
+        self.trajectory.fromPoseArray(msg)
+
+        if self.simplify_traj is True:
+            new_points = self.remove_colinear_points(self.trajectory.points)
+            self.trajectory.clear()
+
+            for point in new_points:
+                self.trajectory.addPoint(point)
+
+        self.trajectory.publish_viz(duration=0.0)
+        self.points = np.array(self.trajectory.points)
+        self.get_logger().info(f"{len(self.points)}")
+        self.initialized_traj = True
+
+    def remove_colinear_points(self, trajectory, tol=0.0018):
+        """
+        Removes colinear intermediate points from a 2D trajectory.
+
+        Parameters:
+            trajectory: list of (x, y) tuples
+            tol: tolerance for considering cross product as zero (float)
+
+        Returns:
+            simplified_trajectory: list of (x, y) tuples
+        """
+        traj = np.array(trajectory)
+        if len(traj) <= 2:
+            return trajectory  # Nothing to simplify
+
+        simplified = [traj[0]]
+        for i in range(1, len(traj) - 1):
+            a = traj[i - 1]
+            b = traj[i]
+            c = traj[i + 1]
+
+            v1 = b - a
+            v2 = c - b
+            cross = v1[0]*v2[1] - v1[1]*v2[0]
+
+            if abs(cross) > tol:
+                simplified.append(b)
+
+        simplified.append(traj[-1])  # Always keep the last point
+        return [tuple(pt) for pt in simplified]
 
     def pose_callback(self, odometry_msg):
         if self.initialized_traj is False:
@@ -69,11 +121,11 @@ class PurePursuit(Node):
                     odometry_msg.pose.pose.orientation.w]
         _, _, theta = R.from_quat(quaternion).as_euler('xyz', degrees=False)
 
-        points = np.array(self.trajectory.points)
+        points = self.points
         car = np.array([x, y])
 
         # Check if at goal
-        if np.linalg.norm(points[-1] - car) < 0.2:
+        if np.linalg.norm(points[-1] - car) < 0.25:
             drive_msg = AckermannDriveStamped()
             drive_msg.header.stamp = self.get_clock().now().to_msg()
             drive_msg.header.frame_id = 'base_link'
@@ -81,15 +133,14 @@ class PurePursuit(Node):
             drive_msg.drive.steering_angle = 0.0
 
             self.drive_pub.publish(drive_msg)
-            self.get_logger().info("At goal pose")
             return
 
-        target_point, target_index = self.circle_segment_intersections(points, self.lookahead, car)
+        target_point, _ = self.circle_segment_intersections(points, self.lookahead, car)
 
         if np.linalg.norm(points[-1] - car) < 2 * self.lookahead:
             target_point = points[-1]
         elif target_point is None:
-            target_point = points[np.argmin(np.sum((points - car)**2, axis=1))]
+            target_point = points[np.argmin(np.linalg.norm(points - car, axis=1))]
 
         steering_angle = self.compute_steering_angle(x, y, target_point[0], target_point[1], theta)
 
@@ -134,6 +185,23 @@ class PurePursuit(Node):
 
         return best_intersection, best_index  # will be None if no intersection
 
+    def curvature_proxy(self, p1, p2, p3):
+        """
+        Returns magnitude of 2D cross product between vectors (p2 - p1) and (p3 - p2).
+        """
+        v1 = p2 - p1
+        v2 = p3 - p2
+        return abs(v1[0]*v2[1] - v1[1]*v2[0])
+
+    def compute_steering_angle(self, x_robot, y_robot, x_target, y_target, theta):
+        """
+        Compute the steering angle for pure pursuit.
+        """
+        desired_heading = np.arctan2(y_target - y_robot, x_target - x_robot)
+        steering_angle = desired_heading - theta
+        steering_angle = np.arctan2(np.sin(steering_angle), np.cos(steering_angle))
+        return steering_angle
+
     def publish_intersection(self, intersection):
         intersect_msg = Marker()
         intersect_msg.header.frame_id = "/map"
@@ -156,25 +224,6 @@ class PurePursuit(Node):
         intersect_msg.color.a = 1.0
 
         self.intersect_pub.publish(intersect_msg)
-
-    def compute_steering_angle(self, x_robot, y_robot, x_target, y_target, theta):
-        """
-        Compute the steering angle for pure pursuit.
-        """
-        desired_heading = np.arctan2(y_target - y_robot, x_target - x_robot)
-        steering_angle = desired_heading - theta
-        steering_angle = np.arctan2(np.sin(steering_angle), np.cos(steering_angle))
-        return steering_angle
-
-    def trajectory_callback(self, msg):
-        self.get_logger().info(f"Receiving new trajectory with {len(msg.poses)} points")
-
-        self.trajectory.clear()
-        self.trajectory.fromPoseArray(msg)
-        self.trajectory.publish_viz(duration=0.0)
-
-        self.initialized_traj = True
-
 
 def main(args=None):
     rclpy.init(args=args)
