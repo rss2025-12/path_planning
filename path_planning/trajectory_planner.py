@@ -76,7 +76,7 @@ class PathPlan(Node):
         self.goal_pose = None
 
         # Planning vars
-        self.search_based = False # False: sample_based
+        self.search_based = True # False: sample_based
 
         self.get_logger().info("Path planner initialized")
 
@@ -376,7 +376,7 @@ class PathPlan(Node):
 
     #     return np.array(x_out, y_out, theta_out)
 
-    def steer(self, znearest, zrand, max_steer_ang=3*np.pi/4, L=0.5, lookahead=1.0):
+    def steer(self, znearest, zrand, max_steer_ang=3*np.pi/4, L=0.5, lookahead=1.0, dd=0.1):
         x_robot, y_robot, theta_robot = znearest
         x_wp, y_wp = zrand
 
@@ -390,9 +390,20 @@ class PathPlan(Node):
 
         dist = np.hypot(dx_r, dy_r)
         if dist > lookahead:
+            ### OLD >>>
             dx_r = lookahead / np.sqrt(1 + (x / y) ** 2)
             dy_r = dx_r * (y / x)
+            ### OLD <<<
             # self.get_logger().info(f'point {(x, y)} too far, now {(dx_r, dy_r)}')
+            # ### NEW >>>
+            # x = dx_r
+            # y = dy_r
+            # while self.in_collision(np.array(x, y)) and np.abs(dx_r/dy_r*dd) < np.abs(x) and np.abs(dy_r/dx_r*dd) < np.abs(y):
+            #         x -= dx_r/dy_r*dd
+            #         y -= dy_r/dx_r*dd
+            # dx_r = x
+            # dy_r = y
+            # ### NEW <<<
         
         # works? until here
 
@@ -405,14 +416,17 @@ class PathPlan(Node):
         # Clip to max steering angle
         steer_angle = np.clip(req_steer_ang, -max_steer_ang, max_steer_ang)
 
-        # Compute turning radius and delta heading
-        R = L / np.tan(steer_angle) #suspicious
-        dtheta = lookahead / R #suspicious
+        # ### OLD FIND POINT >>>
+        # # Compute turning radius and delta heading
+        # R = L / np.tan(steer_angle) #suspicious
+        # dtheta = lookahead / R #suspicious
 
-        # Compute new pose in robot frame
-        x_new = R * np.sin(dtheta)
-        y_new = R * (1 - np.cos(dtheta))
-        theta_new = dtheta
+        # # Compute new pose in robot frame
+        # x_new = R * np.sin(dtheta)
+        # y_new = R * (1 - np.cos(dtheta))
+        # theta_new = dtheta
+        # ### <<< OLD FIND POINT
+
         ###
 
         ###
@@ -420,6 +434,13 @@ class PathPlan(Node):
         # y_new = dy_r
         # theta_new = angle_to_wp
         ###
+
+        ### NEW FIND POINT >>>
+        theta_new = np.arcsin(lookahead*np.tan(steer_angle)/(2*L))
+        x_new = np.sin(theta_new)
+        y_new = np.cos(theta_new)
+
+        ### <<< NEW FIND POINT
 
         # Transform back to map frame
         x_map = x_robot + np.cos(theta_robot) * x_new - np.sin(theta_robot) * y_new
@@ -480,12 +501,18 @@ class PathPlan(Node):
 
         for i in range(loop_cap):
             # self.get_logger().info(f'the iteration is {i} mickey mice')
-            if i % 3 == 0:
+            if i % 20 == 0: # OLD: 3 # NEW: 20
                 random_point = end_point[:2]
             else: 
                 random_point = self.sample(buffer_ratio=buffer_ratio) # map frame
+                ### NEW
+                if self.in_collision(random_point) or np.linalg.norm(np.array(random_point) - self.nearest(random_point, nodes).value[:2]) > 5:
+                    i -= 1
+                    continue
+                ### NEW
             parent = self.nearest(random_point, nodes) # map frame
-            new_point = self.steer(parent.value, random_point, lookahead=1.5)
+            # new_point = self.steer(parent.value, random_point, lookahead=1.5) # OLD
+            new_point = self.steer(parent.value, random_point, lookahead=1.5, max_steer_ang=np.pi/10) # NEW
             # self.get_logger().info(f'adding new point {new_point} with parent {parent.value[:2]}')
             # if not self.collision_free(parent.value, new_point) and parent.parent:
             #     parent = parent.parent
