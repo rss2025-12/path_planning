@@ -76,7 +76,7 @@ class PathPlan(Node):
         self.goal_pose = None
 
         # Planning vars
-        self.search_based = True # False: sample_based
+        self.search_based = False # False: sample_based
 
         self.get_logger().info("Path planner initialized")
 
@@ -252,23 +252,78 @@ class PathPlan(Node):
         return []
 
     # RRT methods
-    def sample(self):
+    def sample(self, buffer_ratio=5):
         map_width, map_height = self.map.shape
+        ###
         rand_x = np.random.uniform(0, map_width)
         rand_y = np.random.uniform(0, map_height)
-        # rand_theta = np.random.uniform(0, 2*np.pi)
+
         return (rand_x, rand_y)
+        ###
 
-    def nearest(self, curr_point, rand_nodes):
-        # rand_points is an np arrays of tuples representing points
-        # curr_point is our current starting position
-        rand_points = [rand_node.value[:2] for rand_node in rand_nodes]
+        ###
+        # xl, xh = self.rrt_xbounds[0]-sample_buffer, self.rrt_xbounds[1]+sample_buffer
+        # yl, yh = self.rrt_ybounds[0]-sample_buffer, self.rrt_ybounds[1]+sample_buffer
+
+        # xl = np.clip(xl, a_min=0, a_max=map_width)
+        # xh = np.clip(xh, a_min=0, a_max=map_width)
+        # yl = np.clip(yl, a_min=0, a_max=map_height)
+        # yh = np.clip(yh, a_min=0, a_max=map_height)
+
+        # x_buffer = buffer_ratio * abs(self.rrt_xbounds[1] - self.rrt_xbounds[0] + 5)
+        # y_buffer = buffer_ratio * abs(self.rrt_ybounds[1] - self.rrt_xbounds[0] + 5)
         
-        distances = []
-        for point in rand_points:
-            distances.append(np.linalg.norm(np.array(curr_point) - np.array(point)))
+        # xl = np.max(np.array([self.rrt_xbounds[0] - x_buffer, 0])) 
+        # xh = np.min(np.array([self.rrt_xbounds[1] + x_buffer, map_width]))
+        # yl = np.max(np.array([self.rrt_ybounds[0] - y_buffer, 0]))
+        # yh = np.min(np.array([self.rrt_ybounds[1] + y_buffer, map_height]))
 
-        return rand_nodes[np.argmin(np.array(distances))] #, axis=0
+        # rand_x = np.random.uniform(xl, xh)
+        # rand_y = np.random.uniform(yl, yh)
+
+        # rand_theta = np.random.uniform(0, 2*np.pi)
+        # return (rand_x, rand_y)
+        ###
+
+    # def nearest(self, curr_point, rand_nodes, thresh_ang=np.pi/2):
+    #     # rand_points is an np arrays of tuples representing points
+    #     # curr_point is our current starting position
+    #     rand_points = [(rand_node.value[:2], rand_node.value[2]) for rand_node in rand_nodes]
+        
+    #     distances = []
+    #     for point, point_ang in rand_points:
+    #         ang = np.arctan2(*(curr_point-point)[::-1]) # arctan(y, x)
+    #         if np.abs(point_ang-ang) < thresh_ang:
+    #             distances.append(np.linalg.norm(np.array(curr_point) - np.array(point)))
+
+    #     return rand_nodes[np.argmin(np.array(distances))] #, axis=0
+
+    def nearest(self, curr_point, rand_nodes, thresh_ang=np.pi/2):
+        # min_dist = float('inf')
+        min_dist_no_ang = float('inf')
+        # nearest_node = None
+        nearest_node_no_ang = None
+
+        for rand_node in rand_nodes:
+            point = rand_node.value[:2]
+            # point_ang = rand_node.value[2]
+
+            # angle_to_point = np.arctan2(*(curr_point - point)[::-1])  # arctan(y, x)
+            dist = np.linalg.norm(curr_point - point)
+            if dist < min_dist_no_ang:
+                min_dist_no_ang = dist
+                nearest_node_no_ang = rand_node
+                # if (np.abs(point_ang - angle_to_point) < thresh_ang) and (min_dist > dist):
+                #     min_dist = dist
+                #     nearest_node = rand_node
+                    # dist = np.linalg.norm(curr_point - point)
+                
+        # if nearest_node: 
+        #     return nearest_node
+        # else: 
+        return nearest_node_no_ang
+        # return nearest_node
+
 
     # def steer(self, znearest, zrand, max_steer_ang=3*np.pi/4, L=0.5, lookahead=1):
     #     # include dynamic and kinematic constraints?
@@ -337,12 +392,13 @@ class PathPlan(Node):
         if dist > lookahead:
             dx_r = lookahead / np.sqrt(1 + (x / y) ** 2)
             dy_r = dx_r * (y / x)
-            self.get_logger().info(f'point {(x, y)} too far, now {(dx_r, dy_r)}')
+            # self.get_logger().info(f'point {(x, y)} too far, now {(dx_r, dy_r)}')
         
         # works? until here
 
         angle_to_wp = np.arctan2(dy_r, dx_r)
 
+        ###
         # Pure Pursuit steering angle
         req_steer_ang = np.arctan2(2 * L * np.sin(angle_to_wp), lookahead) #suspicious #imposter
 
@@ -357,11 +413,32 @@ class PathPlan(Node):
         x_new = R * np.sin(dtheta)
         y_new = R * (1 - np.cos(dtheta))
         theta_new = dtheta
+        ###
+
+        ###
+        # x_new = dx_r
+        # y_new = dy_r
+        # theta_new = angle_to_wp
+        ###
 
         # Transform back to map frame
         x_map = x_robot + np.cos(theta_robot) * x_new - np.sin(theta_robot) * y_new
         y_map = y_robot + np.sin(theta_robot) * x_new + np.cos(theta_robot) * y_new
         theta_map = (theta_robot + theta_new) % (2 * np.pi)
+
+        # x = x_wp - x_robot
+        # y = y_wp - y_robot
+        # dx_r = x
+        # dy_r = y
+
+        # dist = np.hypot(x, y)
+        # if dist > lookahead:
+        #     dx_r = lookahead / np.sqrt(1 + (x / y) ** 2)
+        #     dy_r = dx_r * (y / x)
+
+        # x_map = x_robot + dx_r
+        # y_map = y_robot + dy_r
+        # theta_map = np.arctan2(y,x)
 
         return np.array([x_map, y_map, theta_map])
 
@@ -385,42 +462,70 @@ class PathPlan(Node):
                 return False
         return True
 
-    def rrt(self, start_point_map, end_point_map, goal_radius=1):
+    def rrt(self, start_point_map, end_point_map, goal_radius=1, sample_buffer=2, buffer_ratio = 1/3):
         """
         all points are in the map frame
         """
+        start_time = self.get_clock().now()
+        map_width, map_height = self.map.shape
         loop_cap = 10000
         # start_point = (self.world_to_map(*start_point_map[:2])[0], self.world_to_map(*start_point_map[:2])[1], [start_point_map[2]-np.pi])
         # end_point = (self.world_to_map(*end_point_map[:2])[0], self.world_to_map(*end_point_map[:2])[1], end_point_map[2]-np.pi)
         start_point = np.array([*self.world_to_map(*start_point_map[:2]), start_point_map[2]-np.pi])
         end_point = np.array([*self.world_to_map(*end_point_map[:2]), end_point_map[2]-np.pi])
         nodes = [RRTNode(start_point)]
+        self.rrt_xbounds = np.array([start_point[0], start_point[0]])
+        self.rrt_ybounds = np.array([start_point[1], start_point[1]])
+        # self.get_logger().info(f'xbounds are {self.rrt_xbounds}')
+
         for i in range(loop_cap):
             self.get_logger().info(f'the iteration is {i} mickey mice')
             if i % 3 == 0:
                 random_point = end_point[:2]
             else: 
-                random_point = self.sample() # map frame
+                random_point = self.sample(buffer_ratio=buffer_ratio) # map frame
             parent = self.nearest(random_point, nodes) # map frame
             new_point = self.steer(parent.value, random_point, lookahead=1.5)
+            # self.get_logger().info(f'adding new point {new_point} with parent {parent.value[:2]}')
             # if not self.collision_free(parent.value, new_point) and parent.parent:
             #     parent = parent.parent
             #     new_point = self.steer(parent.value, random_point, lookahead=1.)
 
+            # self.get_logger().info(f'xbounds are {self.rrt_xbounds}')
             if self.collision_free(parent.value, new_point):
-                self.get_logger().info(f'not in collision, adding point {new_point}')
+                # self.get_logger().info(f'not in collision, adding point {new_point}')
                 new_node = RRTNode(new_point)
                 new_node.parent = parent
                 nodes.append(new_node)
 
+                ##
+                # if new_point[0] < self.rrt_xbounds[0]:
+                #     self.rrt_xbounds[0] = np.max(np.array([self.rrt_xbounds[0] - sample_buffer, 0])) 
+                # elif new_point[0] > self.rrt_xbounds[1]:
+                #     self.rrt_xbounds[1] = np.min(np.array([self.rrt_xbounds[1] + sample_buffer, map_width]))
+                # # self.get_logger().info(f'xbounds are {self.rrt_xbounds}')
+
+
+                # if new_point[1] < self.rrt_ybounds[0]:
+                #     self.rrt_ybounds[0] = np.max(np.array([self.rrt_ybounds[0] - sample_buffer, 0]))
+                # elif new_point[1] > self.rrt_ybounds[1]:
+                #     self.rrt_ybounds[1] = np.min(np.array([self.rrt_ybounds[1] + sample_buffer, map_height]))
+                ##
+
                 if np.linalg.norm(new_node.value[:2] - end_point[:2]) <= goal_radius: 
-                    self.get_logger().info(f'within goal radius')
+                    end_time = self.get_clock().now()
+                    self.get_logger().info(f'found goal; final time = {end_time - start_time}')
+                    # self.get_logger().info(f'within goal radius')
                     path = []
                     curr_node = new_node
                     while curr_node.parent: 
                         path.append(curr_node.value[:2])
                         curr_node = curr_node.parent
-                    return path
+                    return path[::-1]
+            else:
+                # self.get_logger().info(f'in collision')
+                pass
+
             
             if i%500 == 0:
                 # self.get_logger().info(f'{[node.value for node in nodes]}')
@@ -431,7 +536,7 @@ class PathPlan(Node):
         return None
     
     def pub_rrt_pt(self, nodes):
-        self.get_logger().info(f'trying to publish {[node.value for node in nodes]}')
+        # self.get_logger().info(f'trying to publish {[node.value for node in nodes]}')
         points = [self.map_to_world(*node.value[:2]) for node in nodes]
         viz_points = PoseArray()
         viz_points.header.stamp = self.get_clock().now().to_msg()
