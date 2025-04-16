@@ -7,6 +7,7 @@ from visualization_msgs.msg import Marker
 
 from .utils import LineTrajectory
 from scipy.spatial.transform import Rotation as R
+from tf_transformations import euler_from_quaternion
 import numpy as np
 
 class PurePursuit(Node):
@@ -37,8 +38,8 @@ class PurePursuit(Node):
                                                    "/intersection",
                                                    1)
 
-        self.speed = 5.0 # Remeber to change later
-        self.lookahead = 1.0 # 2.25*self.speed**2
+        self.speed = 5.0  # Remeber to change later
+        self.lookahead = 1.0  # 2.25 * self.speed**2
         self.wheelbase_length = 0.1
 
         self.trajectory = LineTrajectory("/followed_trajectory")
@@ -65,7 +66,7 @@ class PurePursuit(Node):
         car = np.array([x, y])
 
         # Check if at goal
-        if np.linalg.norm(points[-1] - car) < 0.1:
+        if np.linalg.norm(points[-1] - car) < 0.2:
             drive_msg = AckermannDriveStamped()
             drive_msg.header.stamp = self.get_clock().now().to_msg()
             drive_msg.header.frame_id = 'base_link'

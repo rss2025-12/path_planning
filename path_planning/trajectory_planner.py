@@ -76,7 +76,7 @@ class PathPlan(Node):
         self.goal_pose = None
 
         # Planning vars
-        self.search_based = False # False: sample_based
+        self.search_based = True # False: sample_based
 
         self.get_logger().info("Path planner initialized")
 
@@ -116,7 +116,7 @@ class PathPlan(Node):
         msg.data = map_for_debug.flatten().tolist()
         self.map_debug_pub.publish(msg)
 
-        self.get_logger().info(f"Map Recieved")
+        self.get_logger().info(f"Map recieved")
 
     def pose_cb(self, pose):
         x = pose.pose.pose.position.x
@@ -250,7 +250,7 @@ class PathPlan(Node):
                     parent[neighbor] = current
 
         return []
-    
+
     # RRT methods
     def sample(self):
         map_width, map_height = self.map.shape
@@ -318,7 +318,7 @@ class PathPlan(Node):
     #         if min_dist == None or goal_dist < min_dist:
     #             min_dist = goal_dist
     #             x_out, y_out, theta_out = x_new, y_new, theta_new
-        
+
     #     return np.array(x_out, y_out, theta_out)
 
     def steer(self, znearest, zrand, max_steer_ang=3*np.pi/4, L=0.5, lookahead=1.0):
@@ -427,6 +427,7 @@ class PathPlan(Node):
                 pass
             if nodes:
                 self.pub_rrt_pt(np.array(nodes))
+
         return None
     
     def pub_rrt_pt(self, nodes):
