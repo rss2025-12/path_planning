@@ -76,7 +76,7 @@ class PathPlan(Node):
         self.goal_pose = None
 
         # Planning vars
-        self.search_based = True # False: sample_based
+        self.search_based = False # False: sample_based
 
         self.get_logger().info("Path planner initialized")
 
@@ -253,7 +253,7 @@ class PathPlan(Node):
 
     # RRT methods
     def sample(self, buffer_ratio=5):
-        map_width, map_height = self.map.shape
+        map_height, map_width = self.map.shape
         ###
         rand_x = np.random.uniform(0, map_width)
         rand_y = np.random.uniform(0, map_height)
@@ -409,6 +409,8 @@ class PathPlan(Node):
 
         angle_to_wp = np.arctan2(dy_r, dx_r)
 
+        # TODO: convert old code for find point to new to invert pure pursuit model
+
         ###
         # Pure Pursuit steering angle
         req_steer_ang = np.arctan2(2 * L * np.sin(angle_to_wp), lookahead) #suspicious #imposter
@@ -416,7 +418,7 @@ class PathPlan(Node):
         # Clip to max steering angle
         steer_angle = np.clip(req_steer_ang, -max_steer_ang, max_steer_ang)
 
-        # ### OLD FIND POINT >>>
+        ### OLD FIND POINT >>>
         # # Compute turning radius and delta heading
         # R = L / np.tan(steer_angle) #suspicious
         # dtheta = lookahead / R #suspicious
@@ -425,7 +427,7 @@ class PathPlan(Node):
         # x_new = R * np.sin(dtheta)
         # y_new = R * (1 - np.cos(dtheta))
         # theta_new = dtheta
-        # ### <<< OLD FIND POINT
+        ### <<< OLD FIND POINT
 
         ###
 
@@ -435,12 +437,12 @@ class PathPlan(Node):
         # theta_new = angle_to_wp
         ###
 
-        ### NEW FIND POINT >>>
+        # ### NEW FIND POINT >>>
         theta_new = np.arcsin(lookahead*np.tan(steer_angle)/(2*L))
-        x_new = np.sin(theta_new)
-        y_new = np.cos(theta_new)
+        x_new = lookahead*np.cos(theta_new)
+        y_new = lookahead*np.sin(theta_new)
 
-        ### <<< NEW FIND POINT
+        # ### <<< NEW FIND POINT
 
         # Transform back to map frame
         x_map = x_robot + np.cos(theta_robot) * x_new - np.sin(theta_robot) * y_new
@@ -463,14 +465,29 @@ class PathPlan(Node):
 
         return np.array([x_map, y_map, theta_map])
 
-    def in_collision(self, point):
+    def in_collision(self, point, debug=False):
         # check that point is not in occupancy grid or out of bounds
-        map_width, map_height = self.map.shape
+        map_height, map_width = self.map.shape
+        if debug: self.get_logger().info(f'using bounds w = {map_width}, h = {map_height} for collision check')
+
         if not (0 <= point[0] < map_width and 0 <= point[1] < map_height):
+            if debug: self.get_logger().info(f'pt outside bounds')
             return True
 
-        if self.map[int(point[1]), int(point[0])] != 0:
+        ### OLD >>>
+        # if self.map[int(point[1]), int(point[0])] != 0:
+        #     if debug: self.get_logger().info(f'pt inside bounds, not free')
+        #     return True
+        ### OLD <<<
+        
+        ### NEW >>>
+        round_pt = np.round(point)
+        # self.get_logger().info(f'the round pt is {round_pt}')
+        if self.map[int(round_pt[1]), int(round_pt[0])] != 0:
+            if debug: self.get_logger().info(f'pt inside bounds, not free')
             return True
+        ### NEW <<<
+        
         return False
 
     def collision_free(self, xcurrent, xnew, steps = 1000):
@@ -482,6 +499,41 @@ class PathPlan(Node):
             if self.in_collision(pt):
                 return False
         return True
+    
+    def generate_hall_dist(self, step=0.1):
+        map_height, map_width = self.map.shape
+        
+        # self.get_logger().info(f' the sample range is w = {map_width}, h = {map_height}')
+        xrange = np.arange(0, map_width-1, step=step)
+        yrange = np.arange(0, map_height-1, step=step)
+        # self.get_logger().info(f' the sample range is x = {xrange[-5:]}, y = {yrange[-5:]}')
+        # self.get_logger().info(f' map is {self.map}')
+
+        samples = set()
+        for x in xrange:
+            for y in yrange:
+                pt = (x,y)
+                # self.get_logger().info(f'pt is {pt}')
+                if not self.in_collision(pt):
+                    samples.add(pt)
+        # self.get_logger().info(f'the map is shape {self.map.shape} and the map is {self.map}')
+        # self.get_logger().info(f'the generated possible samples are {np.array(samples)}')
+        return np.array(list(samples))
+    
+    def sample_free(self, samples):
+        l = len(samples)
+        return samples[np.random.choice(l)]
+    
+    def sample_resample(self):
+        map_height, map_width = self.map.shape
+        pt = (-1,-1)
+        while self.in_collision(pt):
+            rand_x = np.random.uniform(0, map_width-1)
+            rand_y = np.random.uniform(0, map_height-1)
+            pt = (rand_x, rand_y)
+
+        return pt
+
 
     def rrt(self, start_point_map, end_point_map, goal_radius=1, sample_buffer=2, buffer_ratio = 1/3):
         """
@@ -494,25 +546,39 @@ class PathPlan(Node):
         # end_point = (self.world_to_map(*end_point_map[:2])[0], self.world_to_map(*end_point_map[:2])[1], end_point_map[2]-np.pi)
         start_point = np.array([*self.world_to_map(*start_point_map[:2]), start_point_map[2]-np.pi])
         end_point = np.array([*self.world_to_map(*end_point_map[:2]), end_point_map[2]-np.pi])
+        self.get_logger().info(f'the goal point in the map frame is {end_point} and in collision = {self.in_collision(end_point[:2], debug=True)}')
+
         nodes = [RRTNode(start_point)]
         self.rrt_xbounds = np.array([start_point[0], start_point[0]])
         self.rrt_ybounds = np.array([start_point[1], start_point[1]])
         # self.get_logger().info(f'xbounds are {self.rrt_xbounds}')
+
+        # ### NEW 2 >>>
+        # self.free_samples = self.generate_hall_dist(step=1)
+        # ### NEW 2 <<<
 
         for i in range(loop_cap):
             # self.get_logger().info(f'the iteration is {i} mickey mice')
             if i % 20 == 0: # OLD: 3 # NEW: 20
                 random_point = end_point[:2]
             else: 
-                random_point = self.sample(buffer_ratio=buffer_ratio) # map frame
+                # ### OLD >>>
+                # random_point = self.sample(buffer_ratio=buffer_ratio) # map frame
+                # ### OLD <<<
                 ### NEW
-                if self.in_collision(random_point) or np.linalg.norm(np.array(random_point) - self.nearest(random_point, nodes).value[:2]) > 5:
-                    i -= 1
-                    continue
+                # if self.in_collision(random_point) or np.linalg.norm(np.array(random_point) - self.nearest(random_point, nodes).value[:2]) > 5:
+                #     i -= 1
+                #     continue
                 ### NEW
+                # ### NEW 2 >>>
+                # random_point = self.sample_free(self.free_samples)
+                # ### NEW 2 <<<
+                ### NEW 3 >>>
+                random_point = self.sample_resample()
+                ### NEW 3 <<<
             parent = self.nearest(random_point, nodes) # map frame
-            # new_point = self.steer(parent.value, random_point, lookahead=1.5) # OLD
-            new_point = self.steer(parent.value, random_point, lookahead=1.5, max_steer_ang=np.pi/10) # NEW
+            new_point = self.steer(parent.value, random_point, lookahead=4, max_steer_ang=np.pi/4) # OLD
+            # new_point = self.steer(parent.value, random_point, lookahead=1.5, max_steer_ang=np.pi/10) # NEW
             # self.get_logger().info(f'adding new point {new_point} with parent {parent.value[:2]}')
             # if not self.collision_free(parent.value, new_point) and parent.parent:
             #     parent = parent.parent
