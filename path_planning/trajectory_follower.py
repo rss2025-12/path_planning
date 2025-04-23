@@ -19,7 +19,6 @@ class PurePursuit(Node):
         super().__init__("trajectory_follower")
         self.declare_parameter('odom_topic', "default")
         self.declare_parameter('drive_topic', "default")
-        
 
         self.odom_topic = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.drive_topic = self.get_parameter('drive_topic').get_parameter_value().string_value
@@ -39,11 +38,10 @@ class PurePursuit(Node):
                                                    "/intersection",
                                                    1)
 
+        self.declare_parameter('drive_speed', 1.0)
 
-        self.declare_parameter('drive_speed', 5.0)
-
-        self.speed = self.get_parameter('drive_speed').get_parameter_value().double_value
-        self.lookahead = 1.25  # 2.25 * self.speed**2
+        self.speed = 5.0 # self.get_parameter('drive_speed').get_parameter_value().double_value
+        self.lookahead = 1.0  # 2.25 * self.speed**2
         self.min_lookahead = 1.5
         self.max_lookahead = 4.0
         self.lookahead_threshold = 2.5
@@ -185,21 +183,19 @@ class PurePursuit(Node):
 
         return best_intersection, best_index  # will be None if no intersection
 
-    def curvature_proxy(self, p1, p2, p3):
-        """
-        Returns magnitude of 2D cross product between vectors (p2 - p1) and (p3 - p2).
-        """
-        v1 = p2 - p1
-        v2 = p3 - p2
-        return abs(v1[0]*v2[1] - v1[1]*v2[0])
-
     def compute_steering_angle(self, x_robot, y_robot, x_target, y_target, theta):
         """
         Compute the steering angle for pure pursuit.
         """
-        desired_heading = np.arctan2(y_target - y_robot, x_target - x_robot)
-        steering_angle = desired_heading - theta
-        steering_angle = np.arctan2(np.sin(steering_angle), np.cos(steering_angle))
+        dx = x_target - x_robot
+        dy = y_target - y_robot
+        angle_to_wp = np.arctan2(dy, dx)
+
+        angle = angle_to_wp - theta
+        alpha = np.arctan2(np.sin(angle), np.cos(angle))
+        steering_angle = np.arctan2(2.0 * self.wheelbase_length * np.sin(alpha),
+                                self.lookahead)
+
         return steering_angle
 
     def publish_intersection(self, intersection):
