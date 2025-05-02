@@ -49,6 +49,13 @@ class PathPlan(Node):
             10
         )
 
+        self.obstacle_pub_sub = self.create_subscription(
+            OccupancyGrid,
+            "/occupancy_grid",
+            self.new_grid_cb,
+            10
+        )
+
         self.traj_pub = self.create_publisher(
             PoseArray,
             "/trajectory/current",
@@ -119,6 +126,11 @@ class PathPlan(Node):
 
         self.get_logger().info(f"Built map in {time.time() - start_time}")
         self.get_logger().info(f"Map recieved")
+
+    def new_grid_cb(self, msg):
+        self.map = np.array(msg.data, dtype=np.int8).reshape((msg.info.height, msg.info.width))
+        # self.map = msg.data
+        self.get_logger().info('Got the new occupancy grid')
 
     def pose_cb(self, pose):
         x = pose.pose.pose.position.x
@@ -193,6 +205,8 @@ class PathPlan(Node):
         return T_world_point[0][2], T_world_point[1][2]
 
     def a_star(self, start_point, end_point, map):
+        self.get_logger().info(f"A* is planning on map: {map}")
+
         def heuristic(a, b):
             return np.linalg.norm(np.array(a) - np.array(b))  # Euclidean
 
