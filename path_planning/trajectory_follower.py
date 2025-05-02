@@ -40,8 +40,8 @@ class PurePursuit(Node):
 
         self.declare_parameter('drive_speed', 1.0)
 
-        self.speed = 5.0 # self.get_parameter('drive_speed').get_parameter_value().double_value
-        self.lookahead = 1.0  # 2.25 * self.speed**2
+        self.speed = 1.0 # self.get_parameter('drive_speed').get_parameter_value().double_value
+        self.lookahead = 2.0  # 2.25 * self.speed**2
         self.min_lookahead = 1.5
         self.max_lookahead = 4.0
         self.lookahead_threshold = 2.5
