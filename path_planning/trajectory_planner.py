@@ -13,6 +13,7 @@ from scipy.spatial.transform import Rotation as R
 from scipy.ndimage import grey_dilation
 import numpy as np
 import heapq, time
+from std_msgs.msg import Int32
 
 class PathPlan(Node):
     """ Listens for goal pose published by RViz and uses it to plan a path from
@@ -28,6 +29,9 @@ class PathPlan(Node):
         self.odom_topic = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.map_topic = self.get_parameter('map_topic').get_parameter_value().string_value
         self.initial_pose_topic = self.get_parameter('initial_pose_topic').get_parameter_value().string_value
+
+        self.banana_id_sub = self.create_subscription(Int32, '/banana_id', self.banana_callback, 1)
+        self.map_msg = None
 
         self.map_sub = self.create_subscription(
             OccupancyGrid,
@@ -76,7 +80,7 @@ class PathPlan(Node):
         # Map vars
         self.map = None
         self.resolution = None
-        self.disk_radius = 10 # In pixels
+        self.disk_radius = 7.0 #5 #10 # In pixels
 
         # Pose vars
         self.initial_pose = None
@@ -93,6 +97,7 @@ class PathPlan(Node):
         with 0 as free space and 1 as occupied, the original
         map's occupied spaces are dialated by self.disk_radius
         """
+        self.map_msg = msg
         start_time = time.time()
         width = msg.info.width
         height = msg.info.height
@@ -144,6 +149,14 @@ class PathPlan(Node):
         self.initial_pose = np.array([x, y, theta])
         self.get_logger().info(f"Initial Pose Received")
         self.try_plan_path()
+    
+    def banana_callback(self, int_msg):
+        if int_msg.data == 2:
+            self.get_logger().info(f'Right dilation size')
+            self.disk_radius = 8
+            self.map_cb(self.map_msg)
+        else:
+            self.get_logger().info(f'Wrong dilation size')
 
     def goal_cb(self, msg):
         x = msg.pose.position.x

@@ -8,6 +8,7 @@ from visualization_msgs.msg import Marker
 from .utils import LineTrajectory
 from scipy.spatial.transform import Rotation as R
 from tf_transformations import euler_from_quaternion
+from std_msgs.msg import Bool
 import numpy as np
 
 class PurePursuit(Node):
@@ -30,6 +31,7 @@ class PurePursuit(Node):
         self.drive_pub = self.create_publisher(AckermannDriveStamped,
                                                self.drive_topic,
                                                1)
+        self.get_logger().info(f'Pubishing commands to drive topic: {self.drive_topic}')
         self.odom_sub = self.create_subscription(Odometry,
                                                  self.odom_topic,
                                                  self.pose_callback,
@@ -37,11 +39,15 @@ class PurePursuit(Node):
         self.intersect_pub = self.create_publisher(Marker,
                                                    "/intersection",
                                                    1)
+        self.reverse_sub = self.create_subscription(Bool, 
+                                                    '/back_up', 
+                                                    self.reverse_cb, 
+                                                    1)
 
         self.declare_parameter('drive_speed', 1.0)
 
         self.speed = 1.0 # self.get_parameter('drive_speed').get_parameter_value().double_value
-        self.lookahead = 2.0  # 2.25 * self.speed**2
+        self.lookahead = 1.0 #0.5 #2.0  # 2.25 * self.speed**2
         self.min_lookahead = 1.5
         self.max_lookahead = 4.0
         self.lookahead_threshold = 2.5
@@ -55,6 +61,7 @@ class PurePursuit(Node):
         self.simplify_traj = True
 
         self.visualize_intersect = True
+        self.reverse = False
 
         self.get_logger().info("Path follower initialized")
 
@@ -73,7 +80,7 @@ class PurePursuit(Node):
 
         self.trajectory.publish_viz(duration=0.0)
         self.points = np.array(self.trajectory.points)
-        self.get_logger().info(f"{len(self.points)}")
+        self.get_logger().info(f"Added new trajectory with {len(self.points)} points")
         self.initialized_traj = True
 
     def remove_colinear_points(self, trajectory, tol=0.0018):
@@ -122,8 +129,19 @@ class PurePursuit(Node):
         points = self.points
         car = np.array([x, y])
 
+        if self.reverse:
+            self.get_logger().info(f'Sending reverse drive command')
+            drive_msg = AckermannDriveStamped()
+            drive_msg.header.stamp = self.get_clock().now().to_msg()
+            drive_msg.header.frame_id = 'base_link'
+            drive_msg.drive.speed = -1.0
+            drive_msg.drive.steering_angle = 0.0
+
+            self.drive_pub.publish(drive_msg)
+            return
+
         # Check if at goal
-        if np.linalg.norm(points[-1] - car) < 0.25:
+        if np.linalg.norm(points[-1] - car) < 1.0: #0.25
             drive_msg = AckermannDriveStamped()
             drive_msg.header.stamp = self.get_clock().now().to_msg()
             drive_msg.header.frame_id = 'base_link'
@@ -220,6 +238,9 @@ class PurePursuit(Node):
         intersect_msg.color.a = 1.0
 
         self.intersect_pub.publish(intersect_msg)
+
+    def reverse_cb(self, msg):
+        self.reverse = msg.data
 
 def main(args=None):
     rclpy.init(args=args)

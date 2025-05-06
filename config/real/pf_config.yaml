@@ -26,7 +26,7 @@ particle_filter:
     particle_filter_frame: "/base_link"
 
     # Deterministic flag; set to true to remove all added noise
-    deterministic: False
+    deterministic: True
 
     # Invert odom data when using real car
     odom_invert: True
