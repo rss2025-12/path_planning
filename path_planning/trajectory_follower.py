@@ -129,27 +129,7 @@ class PurePursuit(Node):
         points = self.points
         car = np.array([x, y])
 
-        if self.reverse:
-            self.get_logger().info(f'Sending reverse drive command')
-            drive_msg = AckermannDriveStamped()
-            drive_msg.header.stamp = self.get_clock().now().to_msg()
-            drive_msg.header.frame_id = 'base_link'
-            drive_msg.drive.speed = -1.0
-            drive_msg.drive.steering_angle = 0.0
 
-            self.drive_pub.publish(drive_msg)
-            return
-
-        # Check if at goal
-        if np.linalg.norm(points[-1] - car) < 1.0: #0.25
-            drive_msg = AckermannDriveStamped()
-            drive_msg.header.stamp = self.get_clock().now().to_msg()
-            drive_msg.header.frame_id = 'base_link'
-            drive_msg.drive.speed = 0.0
-            drive_msg.drive.steering_angle = 0.0
-
-            self.drive_pub.publish(drive_msg)
-            return
 
         target_point, _ = self.circle_segment_intersections(points, self.lookahead, car)
 
@@ -168,6 +148,30 @@ class PurePursuit(Node):
         drive_msg.header.frame_id = 'base_link'
         drive_msg.drive.speed = self.speed
         drive_msg.drive.steering_angle = steering_angle
+
+        # check reverse condition
+        if self.reverse:
+            # self.get_logger().info(f'Sending reverse drive command')
+            # drive_msg = AckermannDriveStamped()
+            # drive_msg.header.stamp = self.get_clock().now().to_msg()
+            # drive_msg.header.frame_id = 'base_link'
+            drive_msg.drive.speed = -self.speed
+            # drive_msg.drive.steering_angle = steering_angle
+            drive_msg.drive.steering_angle = 0.0
+
+            self.drive_pub.publish(drive_msg)
+            return
+
+        # Check if at goal
+        if np.linalg.norm(points[-1] - car) < 0.5: # goal dist #0.25
+            drive_msg = AckermannDriveStamped()
+            drive_msg.header.stamp = self.get_clock().now().to_msg()
+            drive_msg.header.frame_id = 'base_link'
+            drive_msg.drive.speed = 0.0
+            drive_msg.drive.steering_angle = 0.0
+
+            self.drive_pub.publish(drive_msg)
+            return
 
         self.drive_pub.publish(drive_msg)
 

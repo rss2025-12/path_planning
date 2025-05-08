@@ -1,15 +1,13 @@
 import rclpy
 from rclpy.node import Node
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
-
-
 assert rclpy
+
 from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped, PoseArray, Quaternion, Point, Pose
 from nav_msgs.msg import OccupancyGrid
 from .utils import LineTrajectory
-# from tf_transformations import euler_from_quaternion
-from scipy.spatial.transform import Rotation as R
 
+from scipy.spatial.transform import Rotation as R
 from scipy.ndimage import grey_dilation
 import numpy as np
 import heapq, time
@@ -35,52 +33,37 @@ class PathPlan(Node):
 
         self.map_sub = self.create_subscription(
             OccupancyGrid,
-            self.map_topic,
-            self.map_cb,
-            1)
+            self.map_topic, self.map_cb, 1)
 
         self.pose_sub = self.create_subscription(
             PoseWithCovarianceStamped,
-            self.initial_pose_topic,
-            self.pose_cb,
-            10
-        )
+            self.initial_pose_topic, self.pose_cb, 10)
 
         self.goal_sub = self.create_subscription(
             PoseStamped,
-            "/goal_pose",
-            self.goal_cb,
-            10
-        )
+            "/goal_pose", self.goal_cb, 10)
 
         self.obstacle_pub_sub = self.create_subscription(
             OccupancyGrid,
             "/occupancy_grid",
-            self.new_grid_cb,
-            10
-        )
+            self.new_grid_cb, 10)
 
         self.traj_pub = self.create_publisher(
             PoseArray,
-            "/trajectory/current",
-            10
-        )
+            "/trajectory/current", 10)
 
         self.trajectory = LineTrajectory(node=self, viz_namespace="/planned_trajectory")
 
         self.map_debug_pub = self.create_publisher(
             OccupancyGrid,
-            "/map_debug",
-            1
-        )
+            "/map_debug", 1)
 
         self.point_debug_pub = self.create_publisher(PoseArray, "/debug_points", 1)
-
 
         # Map vars
         self.map = None
         self.resolution = None
-        self.disk_radius = 7.0 #5 #10 # In pixels
+        self.disk_radius = 7.0 # In pixels
 
         # Pose vars
         self.initial_pose = None
@@ -129,12 +112,49 @@ class PathPlan(Node):
         msg.data = map_for_debug.flatten().tolist()
         self.map_debug_pub.publish(msg)
 
-        self.get_logger().info(f"Built map in {time.time() - start_time}")
-        self.get_logger().info(f"Map recieved")
+        self.get_logger().info(f"Map recieved and built in {time.time() - start_time}")
+
+    def banana_callback(self, int_msg, disk_rad_new=7.0):
+        if int_msg.data == 2:
+            self.get_logger().info(f'Building new map')
+            self.disk_radius = 7.0
+
+            msg = self.map_msg
+            start_time = time.time()
+            width = msg.info.width
+            height = msg.info.height
+            self.resolution = msg.info.resolution
+            self.origin_pos = (msg.info.origin.position.x, msg.info.origin.position.y)
+            self.origin_ori = msg.info.origin.orientation
+            quat = [self.origin_ori.x,
+                    self.origin_ori.y,
+                    self.origin_ori.z,
+                    self.origin_ori.w]
+            _, _, theta = R.from_quat(quat).as_euler('xyz', degrees=False)
+            self.T_world_map = np.array([[np.cos(theta), -np.sin(theta), self.origin_pos[0]],
+                                            [np.sin(theta), np.cos(theta), self.origin_pos[1]],
+                                            [0, 0, 1]])
+            self.T_map_world = np.linalg.inv(self.T_world_map)
+
+            data = np.array(msg.data).reshape((height, width))
+
+            # Disk dialation
+            obstacle_map = np.isin(data, [100, -1]).astype(np.uint8)
+            disk_radius = np.ceil(disk_rad_new)
+            y, x = np.ogrid[-disk_radius:disk_radius+1,
+                            -disk_radius:disk_radius+1]
+            disk = x**2 + y**2 <= disk_radius**2
+            self.map = grey_dilation(obstacle_map, footprint=disk)
+
+            # Debugging
+            map_for_debug = np.where(self.map == 1, 100, 0)
+            msg.data = map_for_debug.flatten().tolist()
+            self.map_debug_pub.publish(msg)
+
+            self.get_logger().info(f"New map built in {time.time() - start_time}")
 
     def new_grid_cb(self, msg):
         self.map = np.array(msg.data, dtype=np.int8).reshape((msg.info.height, msg.info.width))
-        # self.map = msg.data
         self.get_logger().info('Got the new occupancy grid')
 
     def pose_cb(self, pose):
@@ -149,14 +169,6 @@ class PathPlan(Node):
         self.initial_pose = np.array([x, y, theta])
         self.get_logger().info(f"Initial Pose Received")
         self.try_plan_path()
-    
-    def banana_callback(self, int_msg):
-        if int_msg.data == 2:
-            self.get_logger().info(f'Right dilation size')
-            self.disk_radius = 8
-            self.map_cb(self.map_msg)
-        else:
-            self.get_logger().info(f'Wrong dilation size')
 
     def goal_cb(self, msg):
         x = msg.pose.position.x
@@ -393,7 +405,7 @@ class PathPlan(Node):
         #     if debug: self.get_logger().info(f'pt inside bounds, not free')
         #     return True
         ### OLD <<<
-        
+
         ### NEW >>>
         round_pt = np.round(point)
         # self.get_logger().info(f'the round pt is {round_pt}')
@@ -401,7 +413,7 @@ class PathPlan(Node):
             if debug: self.get_logger().info(f'pt inside bounds, not free')
             return True
         ### NEW <<<
-        
+
         return False
 
     def collision_free(self, xcurrent, xnew, steps = 1000):
@@ -413,10 +425,10 @@ class PathPlan(Node):
             if self.in_collision(pt):
                 return False
         return True
-    
+
     def generate_hall_dist(self, step=0.1):
         map_height, map_width = self.map.shape
-        
+
         # self.get_logger().info(f' the sample range is w = {map_width}, h = {map_height}')
         xrange = np.arange(0, map_width-1, step=step)
         yrange = np.arange(0, map_height-1, step=step)
@@ -433,11 +445,11 @@ class PathPlan(Node):
         # self.get_logger().info(f'the map is shape {self.map.shape} and the map is {self.map}')
         # self.get_logger().info(f'the generated possible samples are {np.array(samples)}')
         return np.array(list(samples))
-    
+
     def sample_free(self, samples):
         l = len(samples)
         return samples[np.random.choice(l)]
-    
+
     def sample_resample(self):
         map_height, map_width = self.map.shape
         pt = (-1,-1)
@@ -476,7 +488,7 @@ class PathPlan(Node):
             # self.get_logger().info(f'the iteration is {i} mickey mice')
             if i % 20 == 0: # OLD: 3 # NEW: 20
                 random_point = end_point[:2]
-            else: 
+            else:
                 # ### OLD >>>
                 # random_point = self.sample(buffer_ratio=buffer_ratio) # map frame
                 # ### OLD <<<
