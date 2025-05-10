@@ -104,7 +104,7 @@ class PathPlan(Node):
         disk_radius = np.ceil(self.disk_radius)
         y, x = np.ogrid[-disk_radius:disk_radius+1,
                         -disk_radius:disk_radius+1]
-        disk = x**2 + y**2 <= disk_radius**2
+        disk = x**2 + y**2 <= self.disk_radius**2
         self.map = grey_dilation(obstacle_map, footprint=disk)
 
         # Debugging

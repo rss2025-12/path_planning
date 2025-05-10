@@ -44,10 +44,14 @@ class PurePursuit(Node):
                                                     self.reverse_cb, 
                                                     1)
 
+        self.declare_parameter("planner_switch_topic", "default")
+        self.switch_topic = self.get_parameter('planner_switch_topic').get_parameter_value().string_value
+        self.switch = False
+
         self.declare_parameter('drive_speed', 1.0)
 
         self.speed = 1.0 # self.get_parameter('drive_speed').get_parameter_value().double_value
-        self.lookahead = 1.0 #0.5 #2.0  # 2.25 * self.speed**2
+        self.lookahead = 1.5 #1.0 #0.5 #2.0  # 2.25 * self.speed**2
         self.min_lookahead = 1.5
         self.max_lookahead = 4.0
         self.lookahead_threshold = 2.5
@@ -64,6 +68,9 @@ class PurePursuit(Node):
         self.reverse = False
 
         self.get_logger().info("Path follower initialized")
+
+    def switch_callback(self, msg):
+        self.switch = msg.data
 
     def trajectory_callback(self, msg):
         self.get_logger().info(f"Receiving new trajectory with {len(msg.poses)} points")
@@ -172,8 +179,8 @@ class PurePursuit(Node):
 
             self.drive_pub.publish(drive_msg)
             return
-
-        self.drive_pub.publish(drive_msg)
+        if not self.switch:
+            self.drive_pub.publish(drive_msg)
 
     def circle_segment_intersections(self, points, radius, center):
         best_intersection = None
